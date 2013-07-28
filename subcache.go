@@ -3,7 +3,9 @@
 package subcache
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -34,11 +36,37 @@ type Stats struct {
 	Duration time.Duration // duration it took for the operation
 }
 
+// Pretty output suitable for human consumption.
+func (s *Stats) String() string {
+	var buf bytes.Buffer
+	fmt.Fprintf(
+		&buf,
+		"%s subcache %s for %s took %s",
+		s.Client.Prefix,
+		s.Op,
+		s.Key,
+		s.Duration,
+	)
+
+	if s.Error != nil {
+		fmt.Fprintf(&buf, " failed with %s", s.Error)
+	}
+
+	return buf.String()
+}
+
+// Allows for logging of unstructured information for human consumption.
+type Logger interface {
+	Print(v ...interface{})
+}
+
 // Client for a subcache.
 type Client struct {
-	ByteCache ByteCache
-	Prefix    string
-	Stats     func(s *Stats)
+	ByteCache   ByteCache
+	Prefix      string
+	Stats       func(s *Stats)
+	ErrorLogger Logger // for logging of errors
+	DebugLogger Logger // for logging of successful calls
 }
 
 func (c *Client) Store(key string, value []byte, timeout time.Duration) error {
@@ -53,7 +81,7 @@ func (c *Client) Store(key string, value []byte, timeout time.Duration) error {
 		Key:    key,
 		Value:  value,
 	}
-	defer c.Stats(&stats)
+	defer c.logAndStats(&stats)
 
 	start := time.Now()
 	err := c.ByteCache.Store(key, value, timeout)
@@ -73,7 +101,7 @@ func (c *Client) Get(key string) ([]byte, error) {
 		Op:     OpGet,
 		Key:    key,
 	}
-	defer c.Stats(&stats)
+	defer c.logAndStats(&stats)
 
 	start := time.Now()
 	value, err := c.ByteCache.Get(key)
@@ -81,4 +109,22 @@ func (c *Client) Get(key string) ([]byte, error) {
 	stats.Value = value
 	stats.Error = err
 	return value, err
+}
+
+func (c *Client) logAndStats(s *Stats) {
+	if s.Error == nil {
+		if c.DebugLogger != nil {
+			c.DebugLogger.Print(s)
+		}
+	} else {
+		if c.ErrorLogger != nil {
+			c.ErrorLogger.Print(s)
+		} else if c.DebugLogger != nil {
+			c.DebugLogger.Print(s)
+		}
+	}
+
+	if c.Stats != nil {
+		c.Stats(s)
+	}
 }

@@ -2,6 +2,9 @@ package subcache_test
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +24,16 @@ func (c *fixedCache) Get(key string) ([]byte, error) {
 	return c.get(key)
 }
 
+type proxyLogger struct {
+	p func(v ...interface{})
+}
+
+func (l proxyLogger) Print(v ...interface{}) {
+	l.p(v...)
+}
+
 func TestEmptyPrefix(t *testing.T) {
+	t.Parallel()
 	const errStr = "subcache: empty prefix"
 	sc := &subcache.Client{}
 	err := sc.Store("f", nil, time.Microsecond)
@@ -35,6 +47,7 @@ func TestEmptyPrefix(t *testing.T) {
 }
 
 func TestGetNil(t *testing.T) {
+	t.Parallel()
 	prefix := "foo"
 	plainKey := "bar"
 	fullKey := prefix + ":" + plainKey
@@ -83,6 +96,7 @@ func TestGetNil(t *testing.T) {
 }
 
 func TestStore(t *testing.T) {
+	t.Parallel()
 	prefix := "foo"
 	plainKey := "bar"
 	fullKey := prefix + ":" + plainKey
@@ -133,4 +147,120 @@ func TestStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestDebugLoggerOnGetSuccess(t *testing.T) {
+	t.Parallel()
+	prefix := "foo"
+	plainKey := "bar"
+	expected := fmt.Sprintf(
+		`%s subcache get for %s:%s took`,
+		prefix,
+		prefix,
+		plainKey,
+	)
+
+	c := &fixedCache{
+		get: func(key string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+	l := &proxyLogger{
+		p: func(v ...interface{}) {
+			s := fmt.Sprint(v...)
+			if !strings.HasPrefix(s, expected) {
+				t.Fatalf(`did not find expected prefix "%s" got "%s"`, expected, s)
+			}
+		},
+	}
+
+	sc := &subcache.Client{
+		Prefix:      prefix,
+		ByteCache:   c,
+		DebugLogger: l,
+	}
+
+	sc.Get(plainKey)
+}
+
+func TestDebugLoggerOnGetError(t *testing.T) {
+	t.Parallel()
+	prefix := "foo"
+	plainKey := "bar"
+	expected := fmt.Sprintf(
+		`%s subcache get for %s:%s took`,
+		prefix,
+		prefix,
+		plainKey,
+	)
+	const errStr = "the error"
+
+	c := &fixedCache{
+		get: func(key string) ([]byte, error) {
+			return nil, errors.New(errStr)
+		},
+	}
+	l := &proxyLogger{
+		p: func(v ...interface{}) {
+			s := fmt.Sprint(v...)
+			if !strings.HasPrefix(s, expected) {
+				t.Fatalf(`did not find expected prefix "%s" got "%s"`, expected, s)
+			}
+			if !strings.Contains(s, errStr) {
+				t.Fatalf(`did not find expected error "%s" got "%s"`, errStr, s)
+			}
+		},
+	}
+
+	sc := &subcache.Client{
+		Prefix:      prefix,
+		ByteCache:   c,
+		DebugLogger: l,
+	}
+
+	sc.Get(plainKey)
+}
+
+func TestErrorLoggerOnGetError(t *testing.T) {
+	t.Parallel()
+	prefix := "foo"
+	plainKey := "bar"
+	expected := fmt.Sprintf(
+		`%s subcache get for %s:%s took`,
+		prefix,
+		prefix,
+		plainKey,
+	)
+	const errStr = "the error"
+
+	c := &fixedCache{
+		get: func(key string) ([]byte, error) {
+			return nil, errors.New(errStr)
+		},
+	}
+	dl := &proxyLogger{
+		p: func(v ...interface{}) {
+			t.Fatal("was not expecting debug logger to be called")
+		},
+	}
+	el := &proxyLogger{
+		p: func(v ...interface{}) {
+			s := fmt.Sprint(v...)
+			if !strings.HasPrefix(s, expected) {
+				t.Fatalf(`did not find expected prefix "%s" got "%s"`, expected, s)
+			}
+			if !strings.Contains(s, errStr) {
+				t.Fatalf(`did not find expected error "%s" got "%s"`, errStr, s)
+			}
+		},
+	}
+
+	sc := &subcache.Client{
+		Prefix:      prefix,
+		ByteCache:   c,
+		DebugLogger: dl,
+		ErrorLogger: el,
+	}
+
+	sc.Get(plainKey)
 }
